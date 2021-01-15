@@ -54,45 +54,68 @@ def QA(Qu):
     _, output_depart = model_depart(qus_, L)
     pred_inten  = torch.argmax(output_inten, 1).tolist()
     pred_depart = torch.argmax(output_depart, 1).tolist()
-    return depart_dic[pred_depart[0]],inten_dic[pred_inten[0]]
+    return depart_dic[pred_depart[0]],inten_dic[pred_inten[0]],float(output_depart.max()),float(output_inten.max())
 
-def Ans(qu):
-    qu = qu+'?'
-    df = pd.read_csv('QA_dataset_v4_1222.csv')
-    depart,inten = QA(qu)
-    df = df[df['商管學院單位'] == depart]
-    df = df[df['意圖'] == inten].reset_index()
-    texts = df['問題 (Question)'].values.tolist()
+class Ans_setup():
+    
+    def __init__(self,depart_threshold,inten_threshold,qus_threshold):
+        self.depart_threshold = depart_threshold
+        self.inten_threshold = inten_threshold
+        self.qus_threshold = qus_threshold
+        
+    def Ans(self,qu):
+        if qu[-1] != '?':
+            qu = qu+'?'
+        df = pd.read_csv('QA_dataset_v4_1222.csv')
+        depart,inten,depart_prob,inten_porb = QA(qu)
+        df = df[df['商管學院單位'] == depart]
+        df = df[df['意圖'] == inten].reset_index()
+        texts = df['問題 (Question)'].values.tolist()
 
-    texts += [qu]
+        texts += [qu]
 
-    encodings = tokenizer(
-        texts, # the texts to be tokenized
-        padding=True, # pad the texts to the maximum length (so that all outputs have the same length)
-        return_tensors='pt' # return the tensors (not lists)
-    )
+        encodings = tokenizer(
+            texts, # the texts to be tokenized
+            padding=True, # pad the texts to the maximum length (so that all outputs have the same length)
+            return_tensors='pt' # return the tensors (not lists)
+        )
 
-    encodings = encodings.to(device)
+        encodings = encodings.to(device)
 
-    # disable gradient calculations
-    with torch.no_grad():
-        # get the model embeddings
-        embeds = model(**encodings)
+        # disable gradient calculations
+        with torch.no_grad():
+            # get the model embeddings
+            embeds = model(**encodings)
 
-    embeds = embeds[0]
-    CLSs = embeds[:, 0, :]
+        embeds = embeds[0]
+        CLSs = embeds[:, 0, :]
 
-    # normalize the CLS token embeddings
-    normalized = f.normalize(CLSs, p=2, dim=1)
-    # calculate the cosine similarity
-    cls_dist = normalized.matmul(normalized.T)
-    ans = int(cls_dist[-1][:-1].argmax())
+        # normalize the CLS token embeddings
+        normalized = f.normalize(CLSs, p=2, dim=1)
+        # calculate the cosine similarity
+        cls_dist = normalized.matmul(normalized.T)
+        ans = int(cls_dist[-1][:-1].argmax())
+        qus_prob = float(cls_dist[-1][:-1].max())
 
-    print('depart :',depart)
-    print('inten :',inten)
-    print('similarity qus:',df['問題 (Question)'][ans])
-    print('similarity ans:',df['答案 (Answer)'][ans])
-    print('prob :',float(cls_dist[-1][:-1].max()))
+        if self.depart_threshold < depart_prob:
+            print('depart :',depart)
+            print('depart_prob :',depart_prob)
+        else:
+            print('can not identify depart')
+
+        if self.inten_threshold < inten_porb:
+            print('inten :',inten)
+            print('inten_porb :',inten_porb)
+        else:
+            print('can not identify inten')
+
+        if self.depart_threshold < depart_prob and self.inten_threshold < inten_porb:
+            if self.qus_threshold < qus_prob:
+                print('similarity qus:',df['問題 (Question)'][ans])
+                print('similarity ans:',df['答案 (Answer)'][ans])
+                print('prob :',qus_prob)
+            else:
+                print('not match qustion')
     
 model_depart = BERT().to(device)
 load_checkpoint('depart_best_model.pt', model_depart)
